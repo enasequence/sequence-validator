@@ -15,18 +15,15 @@
  ******************************************************************************/
 package uk.ac.ebi.embl.api.validation.check.entry;
 
-import java.sql.SQLException;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
 import org.apache.commons.lang3.ArrayUtils;
-
 import uk.ac.ebi.embl.api.entry.AgpRow;
-import uk.ac.ebi.embl.api.entry.ContigSequenceInfo;
 import uk.ac.ebi.embl.api.entry.Entry;
-import uk.ac.ebi.embl.api.validation.*;
+import uk.ac.ebi.embl.api.validation.FileType;
+import uk.ac.ebi.embl.api.validation.ValidationEngineException;
+import uk.ac.ebi.embl.api.validation.ValidationResult;
 import uk.ac.ebi.embl.api.validation.annotation.Description;
+
+import java.util.List;
 
 @Description("")
 public class AGPValidationCheck extends EntryValidationCheck
@@ -225,7 +222,7 @@ public class AGPValidationCheck extends EntryValidationCheck
 						{
 							if(getEmblEntryValidationPlanProperty().assemblySequenceInfo.get().size() == 0) 
 							{
-								throw new ValidationEngineException("AssemblySequenceInfo must be given to validate AGP file");
+								throw new ValidationEngineException("AssemblySequenceInfo must be given to validate AGP file", ValidationEngineException.ReportErrorType.VALIDATION_ERROR);
 							}
 						}
 						if (getEmblEntryValidationPlanProperty().assemblySequenceInfo.get().size() > 0) 

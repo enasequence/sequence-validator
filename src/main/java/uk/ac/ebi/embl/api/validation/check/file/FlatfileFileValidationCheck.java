@@ -32,7 +32,6 @@ import uk.ac.ebi.embl.flatfile.reader.EntryReader;
 import uk.ac.ebi.embl.flatfile.reader.embl.EmblEntryReader;
 import uk.ac.ebi.embl.flatfile.reader.embl.EmblEntryReader.Format;
 import uk.ac.ebi.embl.flatfile.reader.genbank.GenbankEntryReader;
-import uk.ac.ebi.embl.flatfile.validation.FlatFileValidations;
 import uk.ac.ebi.embl.flatfile.writer.embl.EmblEntryWriter;
 
 import java.io.*;
@@ -48,38 +47,34 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 		super(options);
 	}	
 	@Override
-	public boolean check(SubmissionFile submissionFile) throws ValidationEngineException
+	public ValidationPlanResult check(SubmissionFile submissionFile) throws ValidationEngineException
 	{
-		boolean valid =true;
-		EmblEntryValidationPlan validationPlan=null;
+		ValidationPlanResult validationResult = new ValidationPlanResult();
+		EmblEntryValidationPlan validationPlan;
 		fixedFileWriter =null;
 		Origin origin =null;
 		try(BufferedReader fileReader= getBufferedReader(submissionFile.getFile());PrintWriter fixedFileWriter=getFixedFileWriter(submissionFile))
 		{
 			boolean isGenbankFile = isGenbank(submissionFile.getFile());
 			clearReportFile(getReportFile(submissionFile));
-			if(!isGenbankFile && !validateFileFormat(submissionFile.getFile(), uk.ac.ebi.embl.api.validation.submission.SubmissionFile.FileType.FLATFILE))
-			{
-				ValidationResult result = new ValidationResult();
-				valid = false;
-				result.append(FlatFileValidations.message(Severity.ERROR, "InvalidFileFormat","flatfile"));
-				if(getOptions().reportDir.isPresent())
-				getReporter().writeToFile(getReportFile(submissionFile), result);
-				addMessagekey(result);
-				return valid;
+			if (!isGenbankFile && !validateFileFormat(submissionFile.getFile(), uk.ac.ebi.embl.api.validation.submission.SubmissionFile.FileType.FLATFILE)) {
+				validationResult.append(reportError(getReportFile(submissionFile), "flatfile"));
+				validationResult.setHasError(true);
+				return validationResult;
 			}
+
 		Format format = options.context.get()==Context.genome?Format.ASSEMBLY_FILE_FORMAT:Format.EMBL_FORMAT;
 		EntryReader entryReader = isGenbankFile?new GenbankEntryReader(fileReader):
 				new EmblEntryReader(fileReader,format,submissionFile.getFile().getName());
 		ValidationResult parseResult = entryReader.read();
-		
+		validationResult.append(parseResult);
 		while(entryReader.isEntry())
 		{
 			if(!parseResult.isValid())
 			{
-				valid = false;
+				validationResult.setHasError(true);
 				getReporter().writeToFile(getReportFile(submissionFile), parseResult);
-				addMessagekey(parseResult);
+				addMessageKeys(parseResult.getMessages());
 			}
 
 			Entry entry = entryReader.getEntry();
@@ -87,12 +82,13 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 			entry.setSubmitterAccession(EntryNameFix.getFixedEntryName(entry.getSubmitterAccession()));
 			if(getOptions().context.get()==Context.genome)
             {
-
-				if (entry.getSubmitterAccession() == null) {
-					String subAcc = entry.getPrimarySourceFeature().getSingleQualifierValue(Qualifier.SUBMITTER_SEQID_QUALIFIER_NAME);
-					entry.setSubmitterAccession(subAcc == null ? entry.getPrimaryAccession() : subAcc);
+            	if(entry.getSubmitterAccession() == null) {
+					if (entry.getPrimarySourceFeature() == null || entry.getPrimarySourceFeature().getSingleQualifierValue(Qualifier.SUBMITTER_SEQID_QUALIFIER_NAME) == null) {
+						entry.setSubmitterAccession(entry.getPrimaryAccession());
+					} else {
+						entry.setSubmitterAccession(entry.getPrimarySourceFeature().getSingleQualifierValue(Qualifier.SUBMITTER_SEQID_QUALIFIER_NAME));
+					}
 				}
-
     			getOptions().getEntryValidationPlanProperty().sequenceNumber.set(getOptions().getEntryValidationPlanProperty().sequenceNumber.get()+1);
              	if(entry.getSequence()==null||entry.getSequence().getSequenceBuffer()==null)
             	{  entryReader.read();
@@ -109,7 +105,7 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 			}
 
 			if(StringUtils.isBlank(entry.getSubmitterAccession()) && getOptions().context.get() == Context.genome) {
-				throw new ValidationEngineException("Entry name can not be null for genome context, please check the AC * line.");
+				throw new ValidationEngineException("Entry name can not be null for genome context, please check the AC * line.", ValidationEngineException.ReportErrorType.VALIDATION_ERROR);
 			} else {
 				getOptions().getEntryValidationPlanProperty().validationScope.set(getValidationScope(entry.getSubmitterAccession()));
 			}
@@ -121,7 +117,7 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 				throw new ValidationEngineException(
 					String.format(
 						"The topology in the ID line \'%s\' conflicts with the topology specified in the chromsome list file \'%s\'.",
-						entry.getSequence().getTopology(), chrListToplogy));
+						entry.getSequence().getTopology(), chrListToplogy), ValidationEngineException.ReportErrorType.VALIDATION_ERROR);
 			  }
 			  entry.getSequence().setTopology(chrListToplogy);
 			}
@@ -130,7 +126,7 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
         	validationPlan=new EmblEntryValidationPlan(getOptions().getEntryValidationPlanProperty());
         	appendHeader(entry);
         	ValidationPlanResult planResult=validationPlan.execute(entry);
-
+			validationResult.append(planResult);
         	if(null != entry.getSubmitterAccession()) {
 				addEntryName(entry.getSubmitterAccession());
 				int assemblyLevel = getAssemblyLevel(getOptions().getEntryValidationPlanProperty().validationScope.get());
@@ -140,13 +136,9 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 
 			if(!planResult.isValid())
 			{
-				valid = false;
+				validationResult.setHasError(true);
 				getReporter().writeToFile(getReportFile(submissionFile), planResult);
-				for(ValidationResult result: planResult.getResults())
-				{
-					if(!result.isValid())
-					addMessagekey(result);
-				}
+				addMessageKeys(planResult.getMessages());
 			}
 			else
 			{
@@ -154,6 +146,7 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 				new EmblEntryWriter(entry).write(fixedFileWriter);
 			}
 			parseResult = entryReader.read();
+			validationResult.append(parseResult);
 			sequenceCount++;
 		}
 		}catch(ValidationEngineException e)
@@ -161,18 +154,18 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 			getReporter().writeToFile(getReportFile(submissionFile),Severity.ERROR, e.getMessage(),origin);
 			closeDB(getContigDB(), getSequenceDB());
 			throw e;
-		} catch (Exception ex) {
+		} catch (IOException ex) {
 			getReporter().writeToFile(getReportFile(submissionFile),Severity.ERROR, ex.getMessage(),origin);
 			closeDB(getContigDB(), getSequenceDB());
-			throw new ValidationEngineException(ex.getMessage(),ex);
+			throw new ValidationEngineException(ex);
 		}
 
-		if(valid)
+		if(validationResult.isValid())
           registerFlatfileInfo();
-		return valid;
+		return validationResult;
 	}
 	@Override
-	public boolean check() throws ValidationEngineException {
+	public ValidationPlanResult check() throws ValidationEngineException {
 		throw new UnsupportedOperationException();
 	}
 	
@@ -202,7 +195,7 @@ public class FlatfileFileValidationCheck extends FileValidationCheck
 				}
 			}
 			 catch (IOException e) {
-				throw new ValidationEngineException(e.getMessage(), e);
+				throw new ValidationEngineException( e);
 			 }
 			if(isHasAnnotationOnlyFlatfile())
 			{

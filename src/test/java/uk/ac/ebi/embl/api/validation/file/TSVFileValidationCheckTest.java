@@ -16,13 +16,11 @@
 package uk.ac.ebi.embl.api.validation.file;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -84,7 +82,7 @@ public class TSVFileValidationCheckTest {
             return;
         }
         options = new SubmissionOptions();
-        options.isRemote = true;
+        options.isWebinCLI = true;
         options.setProjectId(PROJECT_ID);
         options.reportDir = Optional.of(reportsPath);
         options.context = Optional.of(Context.sequence);
@@ -105,7 +103,7 @@ public class TSVFileValidationCheckTest {
                     return;
                 }
                 submissionFile = new SubmissionFile(SubmissionFile.FileType.TSV, new File(System.getProperty("user.dir") + "/src/test/resources/uk/ac/ebi/embl/api/validation/file/template/" + tsvFile), path.toFile());
-                if (!fileValidationCheck.check(submissionFile)) {
+                if (fileValidationCheck.check(submissionFile).hasError()) {
                     valid = false;
                     System.out.println("Failed: " + tsvFile);
                 }
@@ -157,7 +155,7 @@ public class TSVFileValidationCheckTest {
 
     private void checkTSV(String fileName, boolean isValid, String expectedMesage) throws Exception {
         submissionFile = new SubmissionFile(SubmissionFile.FileType.TSV, new File(reportsPath + File.separator + fileName), path.toFile());
-        boolean valid = fileValidationCheck.check(submissionFile);
+        boolean valid = !fileValidationCheck.check(submissionFile).hasError();
         if (isValid) {
             assertTrue(valid);
         } else {
@@ -177,6 +175,7 @@ public class TSVFileValidationCheckTest {
         checkTSV("DELineIssue.tsv.gz", true, "");
     }*/
 
+   //FAILED
     @Test
     public void ppGenePassedAsMarker() throws Exception {
         checkTSV("Sequence-PP_GENE-as-MARKER.tsv.gz", true, "");

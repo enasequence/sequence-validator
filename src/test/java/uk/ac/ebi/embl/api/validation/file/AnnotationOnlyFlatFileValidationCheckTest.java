@@ -49,7 +49,7 @@ public class AnnotationOnlyFlatFileValidationCheckTest extends SubmissionValidat
 		options = new SubmissionOptions();
 		options.source= Optional.of(getSource());
 		options.assemblyInfoEntry= Optional.of(getAssemblyinfoEntry());
-		options.isRemote = true;
+		options.isWebinCLI = true;
 		options.isDevMode = true;
 	}
 
@@ -71,13 +71,13 @@ public class AnnotationOnlyFlatFileValidationCheckTest extends SubmissionValidat
 		options.init();
 		check = new AnnotationOnlyFlatfileValidationCheck(options);
 		check.setSequenceDB(db);
-		assertTrue(check.check(file));
+		assertTrue(!check.check(file).hasError());
 		assertTrue(compareOutputFixedFiles(file.getFile()));
 		db.close();
 	}
 	
 	@Test
-	public void testAnnotationOnlyFlatFilemissingSequence() throws ValidationEngineException, FlatFileComparatorException
+	public void testAnnotationOnlyFlatFilemissingSequence() throws ValidationEngineException
 	{
 		validateMaster(Context.genome);
 		SubmissionFile file=initSubmissionFixedTestFile("invalid_AnnotationOnlyFlatfile.txt",SubmissionFile.FileType.FLATFILE);
@@ -93,7 +93,7 @@ public class AnnotationOnlyFlatFileValidationCheckTest extends SubmissionValidat
 		options.init();
 		check = new AnnotationOnlyFlatfileValidationCheck(options);
 		check.setSequenceDB(db);
-		assertTrue(!check.check(file));
+		assertTrue(check.check(file).hasError());
 		assertEquals(1l,check.getMessageStats().get("SequenceExistsCheck").get());
 		db.close();
 	}

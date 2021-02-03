@@ -47,6 +47,7 @@ import uk.ac.ebi.embl.api.validation.submission.SubmissionFile;
 import uk.ac.ebi.embl.api.validation.submission.SubmissionOptions;
 import uk.ac.ebi.embl.flatfile.reader.EntryReader;
 import uk.ac.ebi.embl.flatfile.reader.ReferenceReader;
+import uk.ac.ebi.embl.flatfile.validation.FlatFileValidations;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -100,8 +101,8 @@ public abstract class FileValidationCheck {
          if(!EntryReader.getSkipTagCounter().isEmpty())
              EntryReader.getSkipTagCounter().clear();
 	}
-	public abstract boolean check(SubmissionFile file) throws ValidationEngineException;
-	public abstract boolean check() throws ValidationEngineException ;
+	public abstract ValidationPlanResult check(SubmissionFile file) throws ValidationEngineException;
+	public abstract ValidationPlanResult check() throws ValidationEngineException ;
 
 	protected SubmissionOptions getOptions() {
 		return options;
@@ -139,21 +140,16 @@ public abstract class FileValidationCheck {
 	}
 
 
-	public  Path getReportFile(SubmissionFile submissionFile) throws ValidationEngineException
-	{
-		Path reportfilePath=null;
-		try
-		{
-			if(submissionFile.getReportFile()!=null)
-				reportfilePath= submissionFile.getReportFile().toPath();
-			else
-				if(getOptions().reportDir.isPresent())
-					reportfilePath= Paths.get(getOptions().reportDir.get(), submissionFile.getFile().getName() + REPORT_FILE_SUFFIX );
-		}catch (Exception e) {
-			throw new ValidationEngineException("Failed to get report file : "+e.getMessage(), e);
+	public Path getReportFile(SubmissionFile submissionFile)  {
+		Path reportFilePath = null;
+
+		if (submissionFile.getReportFile() != null)
+			reportFilePath = submissionFile.getReportFile().toPath();
+		else if (getOptions().reportDir.isPresent()) {
+			reportFilePath = Paths.get(getOptions().reportDir.get(), submissionFile.getFile().getName() + REPORT_FILE_SUFFIX);
 		}
 
-		return reportfilePath;
+		return reportFilePath;
 	}
 
 	protected void clearReportFile(Path reportfilePath) throws IOException
@@ -168,7 +164,7 @@ public abstract class FileValidationCheck {
 				final String entryNameUpper = entryName1.toUpperCase();
 				if (chromosomeNameQualifiers.keySet().stream().anyMatch(s -> s.equalsIgnoreCase(entryNameUpper))) {
 					if(unlocalisedEntryNames.contains(entryNameUpper) ) {
-						throw new ValidationEngineException("Sequence can not exist in both chromosome and unlocalised list");
+						throw new ValidationEngineException("Sequence can not exist in both chromosome and unlocalised list", ReportErrorType.VALIDATION_ERROR);
 					}
 					return ValidationScope.ASSEMBLY_CHROMOSOME;
 				}
@@ -305,14 +301,18 @@ public abstract class FileValidationCheck {
 	{
 		return messageStats;
 	}
-	protected void addMessagekey(ValidationResult result)
-	{
-		for(ValidationMessage message: result.getMessages())
+
+	void addMessageKey(ValidationMessage<Origin> message) {
+		if (messageStats.putIfAbsent(message.getMessageKey(), new AtomicLong(1)) != null)
+			messageStats.get(message.getMessageKey()).incrementAndGet();
+	}
+
+	void addMessageKeys(Collection<ValidationMessage<Origin>> result) {
+		for(ValidationMessage message: result)
 		{
 			if(messageStats.putIfAbsent(message.getMessageKey(), new AtomicLong(1))!=null)
-			messageStats.get(message.getMessageKey()).incrementAndGet();
+				messageStats.get(message.getMessageKey()).incrementAndGet();
 		}
-
 	}
 
 	protected void appendHeader(Entry entry) throws ValidationEngineException
@@ -331,7 +331,7 @@ public abstract class FileValidationCheck {
 		}
 		if(masterEntry == null)
 		{
-			throw new ValidationEngineException("Master entry must to validate sequences");
+			throw new ValidationEngineException("Master entry must to validate sequences", ReportErrorType.VALIDATION_ERROR);
 		}
 		if(entry==null)
 			return ;
@@ -392,12 +392,12 @@ public abstract class FileValidationCheck {
 		return fixedFileWriter;
 	}
 
-	protected void collectContigInfo(Entry entry) throws Exception {
+	protected void collectContigInfo(Entry entry) throws ValidationEngineException {
 		try {
 			if (entry.getSubmitterAccession() == null)
 				entry.setSubmitterAccession(entry.getPrimaryAccession());
 			if (entry.getSubmitterAccession() == null)
-				throw new ValidationEngineException("Submitter accession missing for an entry");
+				throw new ValidationEngineException("Submitter accession missing for an entry", ReportErrorType.VALIDATION_ERROR);
 			if (!agpEntryNames.isEmpty() && agpEntryNames.contains(entry.getSubmitterAccession().toUpperCase()))
 				return;
 			if (entry.getSequence() == null)
@@ -413,7 +413,7 @@ public abstract class FileValidationCheck {
 				}
 			}
 
-		} catch (Exception e) {
+		} catch (ValidationEngineException e) {
 			if (getContigDB() != null)
 				getContigDB().close();
 			throw e;
@@ -422,7 +422,7 @@ public abstract class FileValidationCheck {
 
 	protected void addAgpEntryName(String entryName) throws ValidationEngineException {
 			 if(!agpEntryNames.add(entryName)) {
-			 	throw new ValidationEngineException( " Object name should be unique in AGP files."+ entryName);
+			 	throw new ValidationEngineException( " Object name should be unique in AGP files."+ entryName,ReportErrorType.VALIDATION_ERROR);
 			 }
 	}
 	private void addSourceQualifiers(Entry entry)
@@ -516,7 +516,7 @@ public abstract class FileValidationCheck {
 			entry.addReference(reference);
 		} else {
 
-			if (!getOptions().isRemote) {
+			if (!getOptions().isWebinCLI) {
 				EraproDAOUtils eraProDao = new EraproDAOUtilsImpl(options.eraproConnection.get());
 				Reference reference =  eraProDao.getReference(entry, options.analysisId.get(), AnalysisType.SEQUENCE_FLATFILE);
 				if(reference == null) {
@@ -603,7 +603,18 @@ public abstract class FileValidationCheck {
 	public void setContigDB(DB contigDB) {
 		this.contigDB = contigDB;
 	}
-	
+
+	ValidationResult reportError(Path reportFile, String fileType) {
+		ValidationResult result = new ValidationResult();
+		ValidationMessage<Origin> message = FlatFileValidations.message(Severity.ERROR, "InvalidFileFormat", fileType);
+		addMessageKey(message);
+		result.append(message);
+		if (getOptions().reportDir.isPresent())
+			getReporter().writeToFile(reportFile, result);
+		return result;
+	}
+
+
 	protected boolean validateFileFormat(File file,uk.ac.ebi.embl.api.validation.submission.SubmissionFile.FileType fileType) throws IOException
 	{  
 		String flat_file_token= "ID";

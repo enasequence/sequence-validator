@@ -1,12 +1,11 @@
 package uk.ac.ebi.embl.api.validation.submission;
 
+import org.apache.commons.lang.StringUtils;
 import uk.ac.ebi.embl.api.entry.feature.FeatureFactory;
 import uk.ac.ebi.embl.api.entry.feature.SourceFeature;
 import uk.ac.ebi.embl.api.entry.genomeassembly.AssemblyInfoEntry;
 import uk.ac.ebi.embl.api.entry.qualifier.Qualifier;
-import uk.ac.ebi.embl.api.validation.SequenceEntryUtils;
-import uk.ac.ebi.embl.api.validation.Severity;
-import uk.ac.ebi.embl.api.validation.ValidationEngineException;
+import uk.ac.ebi.embl.api.validation.*;
 import uk.ac.ebi.embl.api.validation.check.genomeassembly.AssemblyInfoNameCheck;
 import uk.ac.ebi.embl.api.validation.helper.MasterSourceFeatureUtils;
 import uk.ac.ebi.embl.api.validation.helper.taxon.TaxonHelperImpl;
@@ -22,9 +21,7 @@ import uk.ac.ebi.ena.webin.cli.validator.manifest.TranscriptomeManifest;
 import uk.ac.ebi.ena.webin.cli.validator.reference.Attribute;
 
 import java.io.File;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Optional;
+import java.util.*;
 
 public class SubmissionValidator implements Validator<Manifest,ValidationResponse> {
 
@@ -39,9 +36,36 @@ public class SubmissionValidator implements Validator<Manifest,ValidationRespons
     }
 
     public void validate() throws ValidationEngineException {
-        new SubmissionValidationPlan(options).execute();
+
+        ValidationPlanResult planResult;
+        try {
+            planResult = new SubmissionValidationPlan(options).execute();
+        } catch (ValidationEngineException e) {
+            writeErrorText(e.getMessage());
+            throw e;
+        }
+
+       if(planResult.hasError()) {
+           if(options.isWebinCLI) {
+               writeErrorText(planResult.getValidationMessage().getOriginText());
+              throw new ValidationEngineException(planResult.getValidationMessage().getOriginText(), ValidationEngineException.ReportErrorType.VALIDATION_ERROR);
+           } else {
+               StringBuilder sb = new StringBuilder();
+               for (ValidationMessage<Origin> error : planResult.getMessages(Severity.ERROR)) {
+                   sb.append(error.getMessage());
+                   sb.append("\n");
+               }
+               throw new ValidationEngineException(StringUtils.chomp(sb.toString()), ValidationEngineException.ReportErrorType.VALIDATION_ERROR);
+           }
+       }
     }
 
+    private void writeErrorText(String errorText) {
+        if (options.reportFile.isPresent()) {
+            new DefaultSubmissionReporter(new HashSet<>(Arrays.asList(Severity.ERROR, Severity.WARNING, Severity.FIX, Severity.INFO)))
+                    .writeToFile(options.reportFile.get(), Severity.ERROR, errorText);
+        }
+    }
     /**
      * Manifest to SubmissionOptions mapping.This is only for webin-cli.
      * @param manifest
@@ -67,7 +91,6 @@ public class SubmissionValidator implements Validator<Manifest,ValidationRespons
         }
         return response;
     }
-
 
     SubmissionOptions mapManifestToSubmissionOptions(Manifest manifest) throws ValidationEngineException {
         if(manifest == null)
@@ -107,7 +130,8 @@ public class SubmissionValidator implements Validator<Manifest,ValidationRespons
             sourceUtils.addExtraSourceQualifiers(sourceFeature, new TaxonHelperImpl(), manifest.getName());
             options.source = Optional.of(sourceFeature);
         }
-        options.isRemote = true;
+
+        options.isWebinCLI = true;
         options.ignoreErrors = manifest.isIgnoreErrors();
         options.reportDir = Optional.of(new File(manifest.getReportFile().getAbsolutePath()).getParent());
         options.reportFile = Optional.of(manifest.getReportFile());
